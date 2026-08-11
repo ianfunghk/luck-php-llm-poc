@@ -14,7 +14,7 @@
 # supervisor runs php-fpm + nginx in one container. This image is "PHP runtime
 # only" per the user's choice — no Python is installed here.
 
-FROM php:8.2-fpm-alpine AS runtime
+FROM php:8.4-fpm-alpine AS runtime
 
 # Install nginx + supervisor + the shmop extension (bundled; just needs enabling
 # for the WeightCache shared-memory fast path).

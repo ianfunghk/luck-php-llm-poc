@@ -33,7 +33,7 @@ memory strategy (see §5).
                                 │   │                     raw embed)  │
                                 │   └─ web/index.php     (HTTP/JSON)  │
                                 │                                    │
-                                │   PHP 8.2 + Nginx, 1 GB mem cap    │
+                                │   PHP 8.4 + Nginx, 1 GB mem cap    │
                                 └────────────────────────────────────┘
 ```
 
@@ -58,11 +58,11 @@ python export_weights.py \
     --subpath hf_stories15M \
     --context-limit 128
 
-# 3. Run via Docker (PHP 8.2-FPM + Nginx)
+# 3. Run via Docker (PHP 8.4-FPM + Nginx)
 docker compose up --build -d
 curl 'http://localhost:8080/?prompt=Once%20upon%20a%20time&max_tokens=60&format=text'
 
-# Or, without Docker, just use any PHP 8.2+ CLI:
+# Or, without Docker, just use any PHP 8.4+ CLI:
 php -d memory_limit=1024M infer.php "Once upon a time"
 ```
 
@@ -110,7 +110,7 @@ random noise — the Llama2 weights are real, loaded straight from HuggingFace.
 | `src/Forward.php` | Llama2 forward pass. Embedding and LM-head matrices are kept as raw binary strings and walked one row per token. Per-layer weights are unpacked lazily and freed after each layer. |
 | `src/WeightCache.php` | Optional `shmop`-backed shared memory cache. First request populates it; subsequent requests (CLI or HTTP, any PHP-FPM worker) skip disk I/O. Falls back silently if `shmop` is unavailable. |
 | `web/index.php` | HTTP entry point — HTML form, `?format=text`, `?format=json`. |
-| `Dockerfile` | PHP 8.2-FPM + Nginx + supervisord, single image, no Python. |
+| `Dockerfile` | PHP 8.4-FPM + Nginx + supervisord, single image, no Python. |
 | `docker-compose.yml` | Builds & exposes the image on `:8080`, bind-mounts `./weights`. |
 | `nginx.conf`, `php.ini`, `.dockerignore` | Supporting configs. |
 
@@ -184,7 +184,7 @@ docker compose exec app php /var/www/html/infer.php "hello"
 
 ### 4b. Bare PHP CLI (no Docker)
 
-If you have PHP 8.2+ locally:
+If you have PHP 8.4+ locally:
 
 ```bash
 php -d memory_limit=1024M -d max_execution_time=120 infer.php "Once upon a time"
@@ -338,7 +338,7 @@ level, for each generated token:
 
 ### tiny1m
 
-On a 2023 MacBook Pro (M2) running PHP 8.2 in the Alpine container:
+On a 2023 MacBook Pro (M2) running PHP 8.4 in the Alpine container:
 
 | Metric | Value |
 |---|---|
