@@ -84,7 +84,8 @@ function run_inference(string $prompt, int $maxTokens = MAX_TOKENS,
         $loader->tokens,
         $loader->config['bos_token_id'] ?? 1,
         $loader->config['eos_token_id'] ?? 2,
-        0
+        0,
+        $loader->config['tokenizer_kind'] ?? 'sentencepiece'
     );
     $engine   = new PhpLlm\Forward($loader);
     $kvCache  = $engine->newKvCache();

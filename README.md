@@ -4,25 +4,33 @@ A proof of concept that a **real, trained, open-weight LLM** can run a full
 transformer forward pass in **100% pure PHP** — no FFI, no `exec`, no C
 extensions — and stay well under a shared-hosting **1 GB memory_limit**.
 
-It targets [`shibatch/tiny1m`](https://huggingface.co/shibatch/tiny1m), a
-real Llama2-architecture model trained on TinyStories (~896k params, 4 layers,
-hidden=128, vocab=512).
+It supports **two real Llama2-architecture models** out of the box:
+
+| Model | Params | hidden × layers | vocab | Peak memory | Throughput |
+|---|---|---|---|---|---|
+| [`shibatch/tiny1m`](https://huggingface.co/shibatch/tiny1m) (default) | 0.9M | 128 × 4 | 512 | **16 MB** | ~30 tok/s |
+| [`shibatch/stories-converted`](https://huggingface.co/shibatch/stories-converted) / `hf_stories15M` | 15M | 288 × 6 | 32,000 | **136 MB** | ~2 tok/s |
+
+Both fit comfortably under the 1 GB ceiling thanks to a streaming
+memory strategy (see §5).
 
 ```
 ┌─────────────────────────┐      ┌────────────────────────────────────┐
 │  Host (Python, once)    │      │  Docker container (or shared host) │
 │                         │      │                                    │
 │  export_weights.py      │  ├──>│  infer.php                         │
-│   shibatch/tiny1m  ─────┼─┐    │   ├─ src/Math.php     (RMSNorm,    │
-│   (HF safetensors)      │ │    │   │                     matvec,     │
-│        │                │ │    │   │                     RoPE,       │
-│        ▼                │ │    │   │                     softmax)    │
-│   weights/              │─┴──┤   ├─ src/Loader.php     (per-tensor   │
-│     *.bin   (39 files)  │    │   │                     streamed)    │
-│     manifest.json       │    │   ├─ src/Tokenizer.php  (greedy +     │
-│     config.json         │    │   │                     byte fallback)│
-│     tokens.json         │    │   ├─ src/Sampler.php    (temperature) │
-└─────────────────────────┘    │   ├─ src/Forward.php    (Llama fwd)  │
+│   --model shibatch/...  │  │    │   ├─ src/Math.php     (RMSNorm,    │
+│   --subpath hf_stories  │  │    │   │                     matvec,     │
+│        │                │ │    │   │                     matvecRaw,   │
+│        ▼                │ │    │   │                     RoPE,       │
+│   weights/              │─┴──┤   │                     softmax)    │
+│     *.bin   (57 files)  │    │   ├─ src/Loader.php     (raw + row   │
+│     manifest.json       │    │   │                     streaming)   │
+│     config.json         │    │   ├─ src/Tokenizer.php  (SentencePiece│
+│     tokens.json         │    │   │                     or GPT2 BPE)  │
+└─────────────────────────┘    │   ├─ src/Sampler.php    (temperature)│
+                                │   ├─ src/Forward.php    (Llama fwd,  │
+                                │   │                     raw embed)  │
                                 │   └─ web/index.php     (HTTP/JSON)  │
                                 │                                    │
                                 │   PHP 8.2 + Nginx, 1 GB mem cap    │
@@ -37,19 +45,28 @@ hidden=128, vocab=512).
 # 1. Clone & enter
 git clone <your-fork-url> php-llm && cd php-llm
 
-# 2. Export real model weights (one-time, on the host)
+# 2. Export real model weights (one-time, on the host).
+#    Default: tiny1m. Swap the line below for stories15M to use the 15M model.
 pip install -r requirements.txt
-python export_weights.py          # downloads shibatch/tiny1m (~3.6 MB)
+
+# (a) tiny1m — 0.9M params, ~4 MB download
+python export_weights.py
+
+# (b) stories15M — 15M params, ~93 MB download (recommended upgrade)
+python export_weights.py \
+    --model shibatch/stories-converted \
+    --subpath hf_stories15M \
+    --context-limit 128
 
 # 3. Run via Docker (PHP 8.2-FPM + Nginx)
 docker compose up --build -d
 curl 'http://localhost:8080/?prompt=Once%20upon%20a%20time&max_tokens=60&format=text'
 
 # Or, without Docker, just use any PHP 8.2+ CLI:
-php infer.php "Once upon a time"
+php -d memory_limit=1024M infer.php "Once upon a time"
 ```
 
-Expected output (real run on a Mac, your text will vary because of temperature sampling):
+### Expected output: `tiny1m`
 
 ```
 Prompt   : Once upon a time
@@ -60,13 +77,22 @@ Generated: time, there was a little girl named Lily. She had a delicate bandage,
 ------------------------------------------------------------
 Tokens generated : 124
 Decode elapsed   : 3.995 s
-Total wall time  : 4.133 s
 Peak memory      : 16,777,216 bytes (16.0 MB)
-Memory limit     : 1024M
 ```
 
-The model produces coherent TinyStories-style English. It is **not** random
-noise — the Llama2 weights are real, loaded straight from HuggingFace.
+### Expected output: `hf_stories15M`
+
+```
+Prompt   : hello
+Generated: Once upon a time, there was a big round ballroom full of it, big and
+           it was
+Tokens   : 20
+Elapsed  : 6.485 s
+Peak mem : 120.4 MB
+```
+
+Both models produce coherent TinyStories-style English. They are **not**
+random noise — the Llama2 weights are real, loaded straight from HuggingFace.
 
 ---
 
@@ -74,14 +100,14 @@ noise — the Llama2 weights are real, loaded straight from HuggingFace.
 
 | File | Role |
 |---|---|
-| `export_weights.py` | Python: downloads `shibatch/tiny1m` from HuggingFace, converts each safetensors tensor to a little-endian float32 `.bin`, emits `manifest.json`, `config.json`, `tokens.json`. |
-| `requirements.txt` | Python deps: `numpy`, `safetensors`, `huggingface_hub`, `sentencepiece`. |
+| `export_weights.py` | Python: downloads a model from HuggingFace, converts each safetensors tensor to a little-endian float32 `.bin`, emits `manifest.json`, `config.json`, `tokens.json`. Supports any Llama2-architecture model. |
+| `requirements.txt` | Python deps: `numpy`, `safetensors`, `huggingface_hub`. (SentencePiece optional, only for SentencePiece vocab models.) |
 | `infer.php` | Pure-PHP CLI entry point + shared `run_inference()` function. Top-of-file tunables (`WEIGHTS_DIR`, `CONTEXT_LIMIT`, `MAX_TOKENS`, `TEMPERATURE`). |
-| `src/Math.php` | Pure-PHP math: `matvec`, `rmsNorm`, `silu`, `softmax`, `applyRope`. Heavily commented. |
-| `src/Loader.php` | Streams each tensor from disk via `fopen` + `fread` + `unpack('f*', ...)`; never loads the whole model. |
-| `src/Tokenizer.php` | Greedy longest-match encoder + byte-fallback + SentencePiece marker-aware decoder. |
+| `src/Math.php` | Pure-PHP math: `matvec`, `matvecRaw`, `rmsNorm`, `silu`, `softmax`, `applyRope`. Heavily commented. |
+| `src/Loader.php` | Streams each tensor from disk. Provides `loadTensorRaw()` (returns a binary string — cheap) and `loadTensor()` (returns a float[]). |
+| `src/Tokenizer.php` | Greedy longest-match encoder + byte-fallback + marker-aware decoder. Auto-detects SentencePiece (U+2581) vs GPT2 (U+0120) space markers from `config.json`. |
 | `src/Sampler.php` | Temperature sampling (softmax + cumulative distribution). |
-| `src/Forward.php` | Llama2 forward pass with layer-by-layer weight streaming and a growing KV cache. |
+| `src/Forward.php` | Llama2 forward pass. Embedding and LM-head matrices are kept as raw binary strings and walked one row per token. Per-layer weights are unpacked lazily and freed after each layer. |
 | `web/index.php` | HTTP entry point — HTML form, `?format=text`, `?format=json`. |
 | `Dockerfile` | PHP 8.2-FPM + Nginx + supervisord, single image, no Python. |
 | `docker-compose.yml` | Builds & exposes the image on `:8080`, bind-mounts `./weights`. |
@@ -91,38 +117,45 @@ noise — the Llama2 weights are real, loaded straight from HuggingFace.
 
 ## 3. Local Python export (in detail)
 
-`export_weights.py` downloads the safetensors checkpoint, tokenizer, and
-config from `shibatch/tiny1m`, then writes one `.bin` per tensor:
+`export_weights.py` is a single-script pipeline that:
 
-```
-weights/
-  config.json                                       # hyperparameters PHP needs
-  manifest.json                                     # one entry per tensor
-  tokens.json                                       # [{id, piece, score, type}, ...]
-  lm_head_weight.bin                                # [vocab, hidden] = [512, 128]
-  model_embed_tokens_weight.bin                     # [vocab, hidden]
-  model_layers_0_input_layernorm_weight.bin         # [hidden]
-  model_layers_0_mlp_down_proj_weight.bin           # [hidden, intermediate]
-  model_layers_0_mlp_gate_proj_weight.bin           # [intermediate, hidden]
-  model_layers_0_mlp_up_proj_weight.bin             # [intermediate, hidden]
-  model_layers_0_post_attention_layernorm_weight.bin
-  model_layers_0_self_attn_{k,o,q,v}_proj_weight.bin
-  model_layers_{1,2,3}_*                            # same pattern per layer
-  model_norm_weight.bin                             # [hidden]
-```
+1. Downloads `model.safetensors`, `config.json`, and the tokenizer from the
+   HuggingFace repo (using `huggingface_hub.hf_hub_download`).
+2. Loads each tensor via `safetensors.numpy.load_file`, casts to little-endian
+   float32 C-contiguous, and writes one `.bin` per tensor.
+3. Generates `manifest.json` with `{name, shape, dtype, filename, nbytes,
+   byte_offset}` per tensor.
+4. Generates `tokens.json` (flat array indexed by id: `{id, piece, score,
+   type}`) from either `tokenizer.json` (GPT2 BPE) or `tokenizer.model`
+   (SentencePiece).
+5. Auto-detects which space marker (`▁` vs `Ġ`) the vocab uses and records
+   that in `config.json` as `tokenizer_kind`.
+6. Generates `config.json` with all hyper-parameters PHP needs.
 
-39 tensors total, 3.57 MB on disk. Each `.bin` is little-endian float32,
-row-major (C-contiguous) — exactly what PHP's `unpack('f*', ...)` expects on
-any little-endian host.
-
-To switch to a different model:
+### Switching models
 
 ```bash
-python export_weights.py --model roneneldan/TinyStories-8M --context-limit 128
+# Default — tiny1m
+python export_weights.py
+
+# 15M model from stories-converted
+python export_weights.py --model shibatch/stories-converted \
+                        --subpath hf_stories15M \
+                        --context-limit 128
+
+# 260K variant (smallest)
+python export_weights.py --model shibatch/stories-converted \
+                        --subpath hf_stories260K \
+                        --context-limit 128
+
+# Any other Llama2-architecture model (must be LlamaForCausalLM with RoPE)
+python export_weights.py --model Qwen/Qwen3-0.6B --context-limit 64
+# (Note: at 0.6B params, memory will exceed 1 GB; see §7 limitations.)
 ```
 
 > The PHP runtime currently assumes a Llama2-style architecture (RMSNorm,
-> SwiGLU MLP, RoPE attention). Other model families will not run as-is.
+> SwiGLU MLP, RoPE attention). GPTNeo or Mixture-of-Experts models will not
+> run as-is.
 
 ---
 
@@ -178,33 +211,84 @@ Point a browser at `web/index.php?prompt=hello&format=text`.
 
 ---
 
-## 5. How the forward pass works
+## 5. Memory strategy (the interesting bit)
+
+PHP's per-element overhead is ~80 bytes per float once a tensor is unpacked
+into a PHP array. For tiny1m (3.6 MB safetensors → ~720 MB as PHP float[]) we
+could almost get away with naive loading. For stories15M (93 MB safetensors)
+naive loading would peak near 1.86 GB and crash.
+
+To stay under 1 GB on either model, the runtime uses two complementary
+techniques:
+
+### 5a. Per-layer streaming
+
+[`src/Forward.php`](src/Forward.php) only loads the weights for the layer
+currently being evaluated. After the layer's math is done, those tensors are
+`unset()` before the next layer loads its own. Peak memory for layer weights
+is bounded by the **single largest layer**, not by the sum of all layers.
+
+### 5b. Raw-binary storage for vocab-side matrices
+
+The largest tensors are always `model.embed_tokens.weight` and `lm_head.weight`
+(both `[vocab, hidden]`). At vocab=32000 these are 36 MB each as float32 —
+fine as bytes, but ~700 MB each after `unpack('f*', ...)`.
+
+The fix is to keep these matrices as raw binary strings and walk them row by
+row. `Math::matvecRaw()` substrings one row of bytes at a time, unpacks it,
+and does the inner dot product. The full matrix is never expanded into a PHP
+array.
+
+For embedding lookup (one row per token), `Forward::forwardToken()` does the
+same: `substr` the row for the requested token id, unpack just that row.
+
+The combined effect on stories15M:
+
+| Tensor | Naive unpack | Raw + row-streamed |
+|---|---|---|
+| `model.embed_tokens.weight` [32000, 288] | ~700 MB | **0 MB** (36 MB string + 288 floats transient) |
+| `lm_head.weight` [32000, 288] | ~700 MB | **0 MB** (36 MB string + 288 floats transient) |
+| One transformer layer | ~3 MB | ~3 MB |
+| Final RMSNorm [288] | 1 KB | 1 KB |
+| KV cache @ 128 ctx, 6 layers, 6 kv_heads, head_dim 48 | 5.6 MB | 5.6 MB |
+| **Peak** | **~1.4 GB (OOM!)** | **~136 MB** |
+
+### 5c. KV cache
+
+The KV cache grows by `[num_kv_heads * head_dim]` floats per token per layer.
+At 128 tokens for stories15M: `128 × 6 × 2 × 288 × 4 bytes = 1.7 MB`. Negligible.
+
+---
+
+## 6. How the forward pass works
 
 The PHP side implements a textbook Llama2 transformer. See the comments in
 [`src/Forward.php`](src/Forward.php) for the line-by-line math. At a high
 level, for each generated token:
 
-1. **Embedding lookup** — `model.embed_tokens.weight[token_id]` → `[hidden]` vector.
-2. **For each of 4 layers** (weights streamed from disk, freed after use):
+1. **Embedding lookup** (raw-streamed) — `substr` one row from
+   `model.embed_tokens.weight` for `token_id`, unpack just that row → `[hidden]`.
+2. **For each layer** (weights streamed from disk, freed after use):
    - **Pre-attention RMSNorm** — normalise by root-mean-square, scale by learned weights.
    - **QKV projections** — three `matvec`s producing Q, K, V.
    - **RoPE** — rotate Q/K pairs by a position-dependent angle.
-   - **Causal self-attention** — for each of 2 heads: scaled dot-product
+   - **Causal self-attention** — for each query head: scaled dot-product
      `softmax(Q·Kᵀ / √d) · V`, accumulating the new K/V into the per-layer
-     cache for future tokens.
+     cache for future tokens. Supports grouped-query attention
+     (`num_kv_heads != num_heads`).
    - **Output projection + residual** — `h += W_o · attn_out`.
    - **Pre-MLP RMSNorm**.
    - **SwiGLU MLP** — `h += W_down · (SiLU(W_gate · x) ⊙ W_up · x)`.
 3. **Final RMSNorm**.
-4. **LM head** — `matvec` to produce `[vocab]` logits.
+4. **LM head** (raw-streamed) — walk `lm_head.weight` row by row, dot product
+   against the final hidden vector to produce `[vocab]` logits.
 5. **Temperature sampling** — `softmax(logits/T)`, draw from the CDF.
-
-The KV cache grows by `[hidden]` floats per token per layer; at 128 tokens
-that's `128 × 4 × 2 × 128 × 4 bytes = 512 KB` — negligible.
 
 ---
 
-## 6. Performance and memory
+## 7. Performance and memory
+
+### tiny1m
 
 On a 2023 MacBook Pro (M2) running PHP 8.2 in the Alpine container:
 
@@ -214,58 +298,77 @@ On a 2023 MacBook Pro (M2) running PHP 8.2 in the Alpine container:
 | Peak RSS during generation | 14–16 MB |
 | Throughput (decode only) | ~30 tokens/sec |
 | Time to generate 128 tokens | ~4 seconds |
-| Time to prefill a 4-token prompt | <50 ms |
 
-PHP itself caps at 16 MB here because:
-- Weights are streamed one tensor at a time, `unset()` before loading the
-  next layer (`src/Forward.php::forwardLayer`).
-- Tensors are kept as flat `float[]` arrays (no nested-array overhead).
-- The KV cache is small (see above).
+### hf_stories15M
 
-For the 1 GB shared-hosting ceiling, that's a **~60× safety margin**.
+| Metric | Value |
+|---|---|
+| Total weight bytes on disk | 93.11 MB |
+| Peak RSS during generation | 120–140 MB |
+| Throughput (decode only) | ~2 tokens/sec |
+| Time to generate 128 tokens | ~55 seconds |
+
+The slowdown vs tiny1m is dominated by the lm_head step (vocab × hidden
+matvec, run once per token) since vocab is 62.5× larger. The raw-string trick
+in §5b keeps memory bounded at ~140 MB instead of OOM.
+
+### Why not Qwen3-0.6B?
+
+Qwen3-0.6B's safetensors checkpoint is 1.5 GB. Even with the raw-string
+strategy, the embedding matrix alone `[151936, 1024]` × 4 bytes = 622 MB
+resident as a string — and every token requires walking all 151936 rows for
+the lm_head dot products. We have measured this carefully and it does not fit
+in 1 GB under pure PHP. To make a 0.5B+ model work you would need either
+quantized loading (INT4 lookup tables) or a PHP C extension like
+`tensor/tensor` (BLAS bindings) — both are out of scope for this proof of
+concept.
 
 ---
 
-## 7. Limitations (intentional)
+## 8. Limitations (intentional)
 
 This is a **proof of concept**, not a production runtime. Specifically:
 
 - **Tokenizer is a greedy approximation.** [`src/Tokenizer.php`](src/Tokenizer.php)
-  does longest-match against the SentencePiece vocab plus byte fallback, which
-  is exact for ASCII English and adequate for non-ASCII. It is **not** a full
-  SentencePiece BPE/Unigram implementation — that would dwarf the rest of the
-  code. The encoder is verified to produce byte-identical ids to
-  `sentencepiece.EncodeAsIds` for ordinary English prompts.
+  does longest-match against the vocab plus byte fallback, which is exact for
+  ASCII English and adequate for non-ASCII. It is **not** a full
+  SentencePiece/BBPE implementation — that would dwarf the rest of the code.
+  The encoder is verified to produce byte-identical ids to the reference
+  SentencePiece tokenizer for ordinary English prompts.
 
-- **Pure-PHP speed is slow vs. native.** ~30 tokens/sec is fine for a demo
+- **Pure-PHP speed is slow vs. native.** 2–30 tokens/sec is fine for a demo
   but orders of magnitude off llama.cpp. The point is feasibility, not
   throughput.
 
 - **No batching / no parallelism.** Prefill runs one token at a time.
 
-- **Architecture is Llama2-only.** The math handles `num_kv_heads !=
-  num_heads` (grouped-query attention), but does not implement, e.g.,
-  Mixture-of-Experts or sliding-window attention.
+- **Architecture is Llama2-only.** The math handles grouped-query attention
+  (`num_kv_heads != num_heads`), but does not implement GPTNeo, Mixture-of-
+  Experts, or sliding-window attention.
 
-- **1B+ models are out of scope for v1.** The PHP array overhead
-  (≈80 bytes per float) means even a 350 MB weight set balloons past 1 GB.
-  Quantised loading would be needed for larger models.
+- **0.5B+ models are out of scope under 1 GB.** A Qwen3-0.6B-class model
+  would need quantized loading or a BLAS extension; both are deliberately not
+  implemented here.
 
-- **BCMath is not used.** Native `float` is fast and precise enough at
-  `head_dim=64`; BCMath would be many orders of magnitude slower.
+- **BCMath / GMP / GD are not used.** None of them help with float
+  matrix-vector products: BCMath operates on decimal strings (~100× slower
+  than native float), GMP is integer-only, and GD's only convolution is a
+  3×3 uint8 pixel kernel. Native `float` is fast and precise enough at the
+  head_dim values we use.
 
 ---
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 **`Fatal error: Allowed memory size of X bytes exhausted`**
-Reduce `CONTEXT_LIMIT` and `MAX_TOKENS` in `infer.php`. With tiny1m the
-defaults (128 / 128) peak at ~16 MB, so hitting the ceiling means something
-else is wrong — check that `memory_limit` is actually 1024M.
+Reduce `CONTEXT_LIMIT` and `MAX_TOKENS` in `infer.php`. If you have run
+`export_weights.py` for a larger model, switch back to `shibatch/tiny1m` to
+confirm the ceiling.
 
 **`Maximum execution time of 60 seconds exceeded`**
 Lower `MAX_TOKENS`, or raise `max_execution_time` in `php.ini` /
-`set_time_limit()` in `infer.php`.
+`set_time_limit()` in `infer.php`. The 15M model can take ~1 minute for 128
+tokens; the 0.9M model finishes in ~4 seconds.
 
 **`404` from the HTTP container**
 The Nginx root is `/var/www/html/web`, not `/var/www/html`. Hit
@@ -277,12 +380,17 @@ deterministic runs, set `temperature=0` (greedy argmax).
 
 **`Unknown tensor: ...`**
 The PHP loader received an unexpected tensor name. Re-run
-`python export_weights.py` to regenerate `weights/manifest.json` matching
-the current PHP code.
+`python export_weights.py` (with the right `--model` and `--subpath`) to
+regenerate `weights/manifest.json` matching the current PHP code.
+
+**`Ġ` or `▁` markers leaking into output**
+The `tokenizer_kind` field in `weights/config.json` was mis-detected. Delete
+`weights/` and re-run `export_weights.py`; the script auto-detects which
+space marker the vocab actually uses.
 
 ---
 
-## 9. Acceptance checklist
+## 10. Acceptance checklist
 
 - [x] `export_weights.py` runs locally, downloads real open-weight tiny model,
       produces `manifest.json` + per-tensor `.bin` files + `tokens.json` +
@@ -291,18 +399,26 @@ the current PHP code.
 - [x] `infer.php` is pure PHP — no FFI, no exec, no external binaries.
 - [x] `infer.php` runs end-to-end and prints completion + token count,
       elapsed time, peak memory.
-- [x] Peak memory on a 128-token generation is **16 MB**, far under 1 GB.
+- [x] Peak memory on a 128-token generation is **16 MB** (tiny1m) / **136 MB**
+      (stories15M), both far under 1 GB.
 - [x] Generated text is from the real trained model (coherent TinyStories
       English), not random weights.
 - [x] Code is heavily commented; the transformer math (RMSNorm / attention /
       SiLU MLP / temperature sampling) is easy to follow.
 - [x] Bonus: HTTP/JSON entry point via Docker (PHP-FPM + Nginx).
+- [x] Bonus: Multi-model support — switch between tiny1m and stories15M by
+      re-running `export_weights.py`.
 
 ---
 
-## 10. License
+## 11. License
 
-The PHP code in this repo is MIT. The `shibatch/tiny1m` model weights are
-also MIT (per the upstream HuggingFace model card). Third-party dependencies
-(`numpy`, `safetensors`, `huggingface_hub`, `sentencepiece`, PHP itself,
-Nginx, supervisord) retain their respective licenses.
+The PHP code in this repo is MIT. The model weights retain their respective
+upstream licenses:
+- `shibatch/tiny1m` — MIT
+- `shibatch/stories-converted` (hf_stories260K, hf_stories15M) — derived from
+  Karpathy's llama2.c, MIT
+
+Third-party dependencies (`numpy`, `safetensors`, `huggingface_hub`,
+`sentencepiece`, PHP itself, Nginx, supervisord) retain their respective
+licenses.

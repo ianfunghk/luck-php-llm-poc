@@ -4,33 +4,33 @@ declare(strict_types=1);
 /**
  * src/Loader.php
  * ==============
- * Streams weights from disk one tensor at a time, exactly as a PHP script on
- * a 1-GB shared host needs: never load the whole model into PHP arrays at once.
+ * Streams weights from disk in TWO representations:
  *
- * The on-disk layout (produced by export_weights.py) is:
+ *   1. loadTensorRaw($name) -> string
+ *      Returns the raw little-endian float32 bytes untouched. This is the
+ *      memory-cheap representation: a [32000, 288] matrix is exactly 36 MB
+ *      as a PHP string (vs ~700 MB after unpack into a float[] array).
  *
- *     weights/
- *         manifest.json   # {tensors: [{name, shape, dtype, filename, nbytes, byte_offset}, ...]}
- *         config.json     # hyperparameters (hidden_size, num_layers, ...)
- *         tokens.json     # [{id, piece, score, type}, ...]
- *         <safe_name>.bin # one little-endian float32 file per tensor
+ *   2. loadTensor($name) -> ['data' => float[], 'shape' => int[]]
+ *      The original unpack-into-array form, for small tensors (RMSNorm
+ *      scales, etc.) where the array overhead doesn't matter.
  *
- * Workflow:
- *     $loader = new Loader('/path/to/weights');
- *     $tensor = $loader->loadTensor('model.layers.0.self_attn.q_proj.weight');
- *     //   $tensor['data']  -> 0-indexed flat float[] (length = prod(shape))
- *     //   $tensor['shape'] -> [out, in]
- *     unset($tensor);   // free before loading the next layer
+ * For matrix-vector multiplies against large weight matrices we provide
+ * helper accessors that:
+ *   - return one row at a time as a float[] (loadTensorRow)
+ *   - expose the raw string + shape (loadTensorRaw) so callers can drive
+ *     their own streaming loop
+ *
+ * PHP's `unpack('f*', ...)` parses in host byte order (little-endian on every
+ * platform we care about), and the Python export forces little-endian on
+ * disk, so bytes line up.
  */
 
 namespace PhpLlm;
 
 class Loader
 {
-    /** @var string Absolute path to the weights/ directory. */
     public string $dir;
-
-    /** @var array Parsed config.json. */
     public array $config;
 
     /** @var array<string,array{name:string,shape:int[],dtype:string,filename:string,nbytes:int,byte_offset:int}> */
@@ -63,61 +63,82 @@ class Loader
     }
 
     /**
-     * Read one tensor from disk and return a 0-indexed flat float[] plus shape.
+     * Read one tensor's raw little-endian float32 bytes (no unpack).
      *
-     * Internally:
-     *   1. fopen the .bin (no whole-file slurp).
-     *   2. fread exactly nbytes.
-     *   3. unpack('f*', $blob) — PHP returns a 1-indexed array; we slice [1..N]
-     *      via array_values to give callers a clean 0-indexed array so the
-     *      indexing math in Math.php stays honest.
-     *
-     * `unpack('f*', ...)` parses in host byte order, which is little-endian on
-     * every shared-hosting platform we care about (x86-64 / arm64 Linux). The
-     * Python export forces little-endian on disk, so the bytes line up.
+     * Use this for large matrices that you want to keep in memory as a string
+     * and walk row-by-row with `substr` + `unpack` on demand. Memory cost is
+     * essentially the on-disk size (1 byte per byte), with very small PHP
+     * string overhead.
      */
-    public function loadTensor(string $name): array
+    public function loadTensorRaw(string $name): string
     {
         if (!isset($this->byName[$name])) {
             throw new \RuntimeException("Unknown tensor: {$name}");
         }
         $entry = $this->byName[$name];
         $path = $this->dir . '/' . $entry['filename'];
-
-        $fp = fopen($path, 'rb');
-        if ($fp === false) {
-            throw new \RuntimeException("Failed to open {$path}");
-        }
-        if ($entry['byte_offset'] > 0) {
-            fseek($fp, $entry['byte_offset']);
-        }
-        $blob = fread($fp, $entry['nbytes']);
-        fclose($fp);
-        if (strlen($blob) !== $entry['nbytes']) {
+        $blob = file_get_contents($path);
+        if ($blob === false || strlen($blob) !== $entry['nbytes']) {
             throw new \RuntimeException(
-                "Short read for {$name}: expected {$entry['nbytes']}, got " . strlen($blob)
+                "Failed to read {$name} ({$entry['nbytes']} bytes) from {$path}"
             );
         }
+        return $blob;
+    }
 
+    /**
+     * Read one tensor fully into a 0-indexed float[] + shape.
+     *
+     * Use for SMALL tensors only (norms, biases). For weight matrices prefer
+     * loadTensorRaw() + loadTensorRow() to keep memory bounded.
+     */
+    public function loadTensor(string $name): array
+    {
+        $entry = $this->byName[$name];
+        $blob = $this->loadTensorRaw($name);
         $unpacked = unpack('f*', $blob);
-        // PHP unpack returns 1-indexed; normalise to 0-indexed.
         return [
             'data'  => array_values($unpacked),
             'shape' => $entry['shape'],
         ];
     }
 
-    /**
-     * Convenience: load only the `data` array. Use when shape is known.
-     */
     public function loadData(string $name): array
     {
         return $this->loadTensor($name)['data'];
     }
 
     /**
-     * Helper: how many logical elements (floats) a tensor holds.
+     * Get the shape for a tensor without touching disk.
      */
+    public function shapeOf(string $name): array
+    {
+        if (!isset($this->byName[$name])) {
+            throw new \RuntimeException("Unknown tensor: {$name}");
+        }
+        return $this->byName[$name]['shape'];
+    }
+
+    /**
+     * Read ONE row from a [R, C] matrix stored as raw float32 bytes.
+     *
+     * Returns a 0-indexed float[] of length $cols. This is the workhorse for
+     * the embedding lookup and the LM-head projection: both touch a single
+     * row per token, so we never need the whole matrix unpacked at once.
+     *
+     * @param string $blob  raw bytes from loadTensorRaw()
+     * @param int    $row   0-indexed row
+     * @param int    $cols  number of columns (row length)
+     */
+    public static function rowOf(string $blob, int $row, int $cols): array
+    {
+        $bytesPerRow = $cols * 4;
+        $offset = $row * $bytesPerRow;
+        $rowBlob = substr($blob, $offset, $bytesPerRow);
+        $unpacked = unpack('f*', $rowBlob);
+        return array_values($unpacked);
+    }
+
     public static function numElements(array $shape): int
     {
         $n = 1;

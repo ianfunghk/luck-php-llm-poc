@@ -44,15 +44,37 @@ class Tokenizer
     /** @var array<int,int> byte value (0..255) -> token id */
     private array $byteFallbackId;
 
+    /**
+     * Marker that the model uses to represent a leading/inter-word space.
+     *  - SentencePiece (tiny1m): U+2581 ('▁')
+     *  - GPT2 BPE (stories15M, Qwen): U+0120 ('Ġ')
+     */
+    private string $spaceMarker;
+
+    /** Which byte the space marker is. Used by encode/decode fast paths. */
+    private string $spaceMarkerChar;
+
     public int $bosId;
     public int $eosId;
     public int $unkId;
 
-    public function __construct(array $tokens, int $bosId = 1, int $eosId = 2, int $unkId = 0)
+    public function __construct(array $tokens, int $bosId = 1, int $eosId = 2, int $unkId = 0,
+                                string $kind = 'sentencepiece')
     {
         $this->bosId = $bosId;
         $this->eosId = $eosId;
         $this->unkId = $unkId;
+
+        // GPT2 BPE uses U+0120 ( LATIN CAPITAL LETTER G WITH BREVE, "Ġ" ),
+        // which the original GPT2 byte-level BPE inserts in place of spaces.
+        // SentencePiece uses U+2581 ( LOWER HALF BLOCK, "▁" ).
+        if ($kind === 'gpt2_bpe') {
+            $this->spaceMarker     = "\xC4\xA0";   // U+0120
+            $this->spaceMarkerChar = "\xC4\xA0";
+        } else {
+            $this->spaceMarker     = "\xE2\x96\x81"; // U+2581
+            $this->spaceMarkerChar = "\xE2\x96\x81";
+        }
 
         $this->idToPiece = [];
         $this->pieceToId = [];
@@ -65,15 +87,10 @@ class Tokenizer
 
             $this->idToPiece[$id] = $piece;
 
-            // Only register non-control, non-byte-fallback pieces for greedy
-            // matching (control tokens like <s> / </s> / <unk> and byte tokens
-            // <0xHH> are never the right match during normal encoding).
             if ($this->isByteFallbackPiece($piece)) {
                 $byteVal = hexdec(substr($piece, 3, 2));
                 $this->byteFallbackId[(int)$byteVal] = $id;
             } elseif (!$this->isControlPiece($piece)) {
-                // If two pieces happen to collide on the same string, keep the
-                // one with the lower id (typical SentencePiece convention).
                 if (!isset($this->pieceToId[$piece])) {
                     $this->pieceToId[$piece] = $id;
                 }
@@ -88,17 +105,15 @@ class Tokenizer
     /**
      * Tokenise a UTF-8 string into ids, with BOS prepended.
      *
-     * SentencePiece prepends the U+2581 marker normally added at the start
-     * of a sentence; we mirror that behaviour so the model sees the same
-     * prefix it was trained with.
+     * Mirrors the relevant piece of SentencePiece/GPT2 normalisation:
+     *   - prepend the appropriate space marker at the very start
+     *   - replace ASCII spaces with the same marker
      */
     public function encode(string $text): array
     {
-        // Normalise like SentencePiece: prepend a leading word-boundary marker.
-        // tiny1m's vocab uses "▁" (U+2581) as the space marker.
-        $text = "\xE2\x96\x81" . $text;
-        // Replace literal ASCII spaces with the same marker.
-        $text = str_replace(' ', "\xE2\x96\x81", $text);
+        $marker = $this->spaceMarker;
+        $text = $marker . $text;
+        $text = str_replace(' ', $marker, $text);
 
         $bytes = strlen($text);
         $ids = [$this->bosId];
@@ -125,8 +140,11 @@ class Tokenizer
                 if (isset($this->byteFallbackId[$byteVal])) {
                     $ids[] = $this->byteFallbackId[$byteVal];
                 } else {
-                    // No byte-fallback token available (extremely unlikely with
-                    // tiny1m's full 0..255 coverage) — emit UNK.
+                    // No byte-fallback token available — emit UNK.
+                    // (GPT2 BPE models do not have <0xHH> tokens; their byte
+                    // coverage is achieved via dedicated pieces for common
+                    // characters, so we generally do not hit this path for
+                    // ordinary ASCII input.)
                     $ids[] = $this->unkId;
                 }
                 $i += 1;
@@ -141,8 +159,8 @@ class Tokenizer
      *
      * Rules:
      *   - byte-fallback tokens (`<0xHH>`) -> raw byte
-     *   - control tokens (`<s>`, `</s>`, `<unk>`) -> skipped
-     *   - U+2581 marker -> ASCII space
+     *   - control tokens (`<s>`, `</s>`, `<unk>`, `<|endoftext|>`...) -> skipped
+     *   - the chosen space marker -> ASCII space
      */
     public function decode(array $ids): string
     {
@@ -161,8 +179,8 @@ class Tokenizer
                 $out .= chr($byteVal);
                 continue;
             }
-            // Replace SentencePiece's word-boundary marker with a space.
-            $out .= str_replace("\xE2\x96\x81", ' ', $piece);
+            // Replace the space marker with an ASCII space.
+            $out .= str_replace($this->spaceMarkerChar, ' ', $piece);
         }
         // Collapse leading space that comes from the prepended marker.
         return ltrim($out, ' ');
@@ -170,7 +188,10 @@ class Tokenizer
 
     private function isControlPiece(string $piece): bool
     {
-        // Tokens like <s>, </s>, <unk>, <pad> ... — anything wrapped in <>.
+        // SentencePiece-style: <s>, </s>, <unk>, <pad> ...
+        // GPT2-style: <|endoftext|>, <|im_start|>, <|im_end|> ...
+        // All of these start with '<' and end with '>'. Byte-fallback tokens
+        // (<0xHH>) also match that pattern but are handled separately.
         return strlen($piece) >= 2 && $piece[0] === '<' && substr($piece, -1) === '>'
             && !$this->isByteFallbackPiece($piece);
     }

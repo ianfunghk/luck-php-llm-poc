@@ -6,35 +6,38 @@ declare(strict_types=1);
  * ===========
  * Pure-PHP math primitives used by the Llama2-style forward pass.
  *
- * All tensors are stored as **flat 1-D PHP arrays** (the most memory-efficient
- * representation; nested arrays waste ~80 bytes per element on PHP's zval
- * overhead). Matrices follow **row-major (C-contiguous)** layout, so a tensor
- * with logical shape [R, C] lives in a flat array of length R*C where the
- * element at row r, column c is at index `r*C + c`.
+ * Two representations of a 2-D weight matrix W with logical shape [R, C]:
  *
- * Index convention note:
- *   PHP arrays are 1-indexed by default, but here we *force* 0-indexing by
- *   always packing with `unpack` and trimming/normalising so that
- *   `$a[$i]` matches the math (`$i` starts at 0). This keeps the formulas
- *   in the comments honest.
+ *   - "flat array"  : 0-indexed float[] of length R*C. Logical element
+ *                     W[r][c] lives at index r*C + c. This is what callers
+ *                     used in v1; element overhead is ~80 bytes/float.
+ *
+ *   - "raw binary"  : PHP string holding R*C*4 little-endian float32 bytes
+ *                     (exactly the on-disk layout). Overhead is essentially
+ *                     the byte count. We unpack rows lazily as needed.
+ *
+ * The stories15M upgrade added the raw-binary variants (matvecRaw, dotRaw)
+ * because the lm_head/embedding matrices at vocab=32000 would consume
+ * ~1.5 GB after unpack, blowing the 1 GB ceiling. Keeping them as strings
+ * keeps peak memory near the on-disk size.
+ *
+ * Index convention: PHP arrays here are forced to 0-indexed (we use
+ * array_values(unpack(...)) to normalise).
  */
 
 namespace PhpLlm;
 
 final class Math
 {
+    // --------------------------------------------------------------------- //
+    // Flat-array variants (used for small tensors and per-layer weights).
+    // --------------------------------------------------------------------- //
+
     /**
-     * Matrix-vector multiply: y = W @ x
+     * Matrix-vector multiply: y = W @ x with W as a flat float[].
      *
-     * W is a flat row-major array with logical shape [out_dim, in_dim].
-     * x is a flat array of length in_dim.
-     * Returns a flat array of length out_dim.
-     *
-     * Formula (per output row i):
-     *     y[i] = sum_{j=0..in_dim-1}  W[i*in_dim + j] * x[j]
-     *
-     * This is the hottest loop in the forward pass — every projection layer
-     * (Q/K/V/O, gate/up/down, embedding lookup, LM head) calls it.
+     * W is row-major [outDim, inDim]. Element W[i][j] is at index i*inDim + j.
+     *     y[i] = sum_j W[i*inDim + j] * x[j]
      */
     public static function matvec(array $W, array $x, int $outDim, int $inDim): array
     {
@@ -42,7 +45,6 @@ final class Math
         for ($i = 0; $i < $outDim; $i++) {
             $base = $i * $inDim;
             $sum = 0.0;
-            // Hoist the inner loop as a tight float accumulator.
             for ($j = 0; $j < $inDim; $j++) {
                 $sum += $W[$base + $j] * $x[$j];
             }
@@ -51,18 +53,64 @@ final class Math
         return $y;
     }
 
+    // --------------------------------------------------------------------- //
+    // Raw-binary variants (used for large vocab-side matrices).
+    // --------------------------------------------------------------------- //
+
+    /**
+     * Matrix-vector multiply where W is a raw little-endian float32 string.
+     *
+     * We walk W one row at a time: substr the row's bytes, unpack once,
+     * then do the inner dot product. This bounds peak memory to roughly
+     * (one row's worth of floats) regardless of W's total size.
+     *
+     *     y[i] = sum_j W_row[i][j] * x[j]      for i = 0..outDim-1
+     *
+     * @param string $Wraw   raw bytes, length outDim*inDim*4
+     * @param array  $x      float[] of length inDim
+     */
+    public static function matvecRaw(string $Wraw, array $x, int $outDim, int $inDim): array
+    {
+        $rowBytes = $inDim * 4;
+        $y = array_fill(0, $outDim, 0.0);
+        for ($i = 0; $i < $outDim; $i++) {
+            $rowBlob = substr($Wraw, $i * $rowBytes, $rowBytes);
+            // unpack('f*', ...) is 1-indexed; iterate $j from 1..inDim.
+            $wRow = unpack('f*', $rowBlob);
+            $sum = 0.0;
+            for ($j = 0; $j < $inDim; $j++) {
+                $sum += $wRow[$j + 1] * $x[$j];
+            }
+            $y[$i] = $sum;
+        }
+        return $y;
+    }
+
+    /**
+     * Vector-vector dot product where one vector is a raw float32 string.
+     *
+     * Used when x is a small float[] (the hidden vector) and W is a single
+     * row of a large matrix unpacked on the fly.
+     */
+    public static function dotRaw(string $rowBlob, array $x, int $inDim): float
+    {
+        $wRow = unpack('f*', $rowBlob);
+        $sum = 0.0;
+        for ($j = 0; $j < $inDim; $j++) {
+            $sum += $wRow[$j + 1] * $x[$j];
+        }
+        return $sum;
+    }
+
+    // --------------------------------------------------------------------- //
+    // Normalisation + activation (small tensors only; flat-array form).
+    // --------------------------------------------------------------------- //
+
     /**
      * Root Mean Square Layer Normalisation (RMSNorm).
      *
-     * Llama2 uses RMSNorm (Zhang & Sennrich 2019) instead of LayerNorm.
-     * Unlike LayerNorm, RMSNorm has no mean-subtraction; it only scales by
-     * the root-mean-square of the inputs:
-     *
-     *     ms = mean(x^2) = (1/D) * sum_{i=1..D} x[i]^2
-     *     x_norm[i] = x[i] / sqrt(ms + eps)
-     *     y[i] = w[i] * x_norm[i]           (w is a learned per-element scale)
-     *
-     * The eps inside the sqrt prevents division by zero for all-zero inputs.
+     *     ms = (1/D) * sum_i x[i]^2
+     *     y[i] = w[i] * x[i] / sqrt(ms + eps)
      */
     public static function rmsNorm(array $x, array $w, float $eps): array
     {
@@ -72,7 +120,6 @@ final class Math
             $v = $x[$i];
             $ss += $v * $v;
         }
-        // ms = mean of squares; the normaliser is 1 / sqrt(ms + eps).
         $ms = $ss / $d;
         $inv = 1.0 / sqrt($ms + $eps);
 
@@ -84,11 +131,8 @@ final class Math
     }
 
     /**
-     * SiLU (Sigmoid Linear Unit, aka "swish") activation.
-     *
-     *     silu(x) = x * sigmoid(x) = x / (1 + exp(-x))
-     *
-     * Used inside the Llama2 SwiGLU MLP: down(silu(gate(x)) * up(x)).
+     * SiLU (Sigmoid Linear Unit / "swish"):
+     *     silu(x) = x / (1 + exp(-x))
      */
     public static function silu(float $x): float
     {
@@ -97,9 +141,6 @@ final class Math
 
     /**
      * Numerically stable softmax over a flat array of logits.
-     *
-     * Subtract the max before exp() to prevent overflow when logits are large.
-     *     p[i] = exp(z[i] - max(z)) / sum_j exp(z[j] - max(z))
      */
     public static function softmax(array $logits): array
     {
@@ -128,27 +169,30 @@ final class Math
     }
 
     /**
+     * Softmax over a raw float32 string of logits.
+     *
+     * Used by the LM-head path when logits come straight from matvecRaw.
+     */
+    public static function softmaxRaw(string $raw): array
+    {
+        $vals = unpack('f*', $raw);
+        // unpack is 1-indexed; normalise.
+        $logits = array_values($vals);
+        return self::softmax($logits);
+    }
+
+    /**
      * Apply Rotary Position Embedding (RoPE) to query (q) and key (k) vectors.
      *
-     * RoPE (Su et al. 2021) is how Llama2 injects position information. It
-     * rotates consecutive pairs of channels within each head by an angle that
-     * grows with position, so that the dot product q·k naturally depends on
-     * their relative position.
-     *
-     * For head dimension d and position p, with frequency base theta:
-     *     freq_k      = 1 / (theta ^ (2k/d))           for k = 0,1,...,d/2-1
+     * For head dimension d and position p with frequency base theta:
+     *     freq_k      = 1 / (theta ^ (2k/d))           k = 0..d/2-1
      *     angle_{p,k} = p * freq_k
-     *
-     * The (2k, 2k+1) pair inside a head is rotated by angle_{p,k}:
-     *     q'[2k]   = q[2k]   * cos(angle) - q[2k+1] * sin(angle)
-     *     q'[2k+1] = q[2k]   * sin(angle) + q[2k+1] * cos(angle)
+     * Pair (2k, 2k+1) inside a head is rotated by angle_{p,k}:
+     *     q'[2k]   = q[2k]*cos - q[2k+1]*sin
+     *     q'[2k+1] = q[2k]*sin + q[2k+1]*cos
      *   (same for k)
      *
-     * The q and k arrays are flat and contain all heads laid out as
-     * [num_heads, head_dim]. We modify them in place.
-     *
-     * NOTE: num_kv_heads may differ from num_heads (grouped-query attention).
-     * k has length num_kv_heads*head_dim while q has num_heads*head_dim.
+     * q has shape [num_heads, head_dim]; k has shape [num_kv_heads, head_dim].
      */
     public static function applyRope(
         array &$q,
@@ -161,7 +205,6 @@ final class Math
     ): void {
         $half = intdiv($headDim, 2);
 
-        // Pre-compute cos/sin per frequency pair (shared across heads & q/k).
         $cos = array_fill(0, $half, 0.0);
         $sin = array_fill(0, $half, 0.0);
         for ($kk = 0; $kk < $half; $kk++) {
@@ -171,12 +214,11 @@ final class Math
             $sin[$kk] = sin($angle);
         }
 
-        // Rotate q: layout [num_heads, head_dim].
         for ($h = 0; $h < $numHeads; $h++) {
             $base = $h * $headDim;
             for ($kk = 0; $kk < $half; $kk++) {
-                $i0 = $base + $kk;            // even-indexed channel
-                $i1 = $base + $kk + $half;    // odd-indexed channel
+                $i0 = $base + $kk;
+                $i1 = $base + $kk + $half;
                 $q0 = $q[$i0];
                 $q1 = $q[$i1];
                 $q[$i0] = $q0 * $cos[$kk] - $q1 * $sin[$kk];
@@ -184,7 +226,6 @@ final class Math
             }
         }
 
-        // Rotate k: layout [num_kv_heads, head_dim].
         for ($h = 0; $h < $numKvHeads; $h++) {
             $base = $h * $headDim;
             for ($kk = 0; $kk < $half; $kk++) {

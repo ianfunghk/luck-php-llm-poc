@@ -3,421 +3,615 @@
     {
       "name": "lm_head.weight",
       "shape": [
-        512,
-        128
+        32000,
+        288
       ],
       "dtype": "float32",
       "filename": "lm_head_weight.bin",
-      "nbytes": 262144,
+      "nbytes": 36864000,
       "byte_offset": 0
     },
     {
       "name": "model.embed_tokens.weight",
       "shape": [
-        512,
-        128
+        32000,
+        288
       ],
       "dtype": "float32",
       "filename": "model_embed_tokens_weight.bin",
-      "nbytes": 262144,
+      "nbytes": 36864000,
       "byte_offset": 0
     },
     {
       "name": "model.layers.0.input_layernorm.weight",
       "shape": [
-        128
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_0_input_layernorm_weight.bin",
-      "nbytes": 512,
+      "nbytes": 1152,
       "byte_offset": 0
     },
     {
       "name": "model.layers.0.mlp.down_proj.weight",
       "shape": [
-        128,
-        352
+        288,
+        768
       ],
       "dtype": "float32",
       "filename": "model_layers_0_mlp_down_proj_weight.bin",
-      "nbytes": 180224,
+      "nbytes": 884736,
       "byte_offset": 0
     },
     {
       "name": "model.layers.0.mlp.gate_proj.weight",
       "shape": [
-        352,
-        128
+        768,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_0_mlp_gate_proj_weight.bin",
-      "nbytes": 180224,
+      "nbytes": 884736,
       "byte_offset": 0
     },
     {
       "name": "model.layers.0.mlp.up_proj.weight",
       "shape": [
-        352,
-        128
+        768,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_0_mlp_up_proj_weight.bin",
-      "nbytes": 180224,
+      "nbytes": 884736,
       "byte_offset": 0
     },
     {
       "name": "model.layers.0.post_attention_layernorm.weight",
       "shape": [
-        128
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_0_post_attention_layernorm_weight.bin",
-      "nbytes": 512,
+      "nbytes": 1152,
       "byte_offset": 0
     },
     {
       "name": "model.layers.0.self_attn.k_proj.weight",
       "shape": [
-        128,
-        128
+        288,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_0_self_attn_k_proj_weight.bin",
-      "nbytes": 65536,
+      "nbytes": 331776,
       "byte_offset": 0
     },
     {
       "name": "model.layers.0.self_attn.o_proj.weight",
       "shape": [
-        128,
-        128
+        288,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_0_self_attn_o_proj_weight.bin",
-      "nbytes": 65536,
+      "nbytes": 331776,
       "byte_offset": 0
     },
     {
       "name": "model.layers.0.self_attn.q_proj.weight",
       "shape": [
-        128,
-        128
+        288,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_0_self_attn_q_proj_weight.bin",
-      "nbytes": 65536,
+      "nbytes": 331776,
       "byte_offset": 0
     },
     {
       "name": "model.layers.0.self_attn.v_proj.weight",
       "shape": [
-        128,
-        128
+        288,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_0_self_attn_v_proj_weight.bin",
-      "nbytes": 65536,
+      "nbytes": 331776,
       "byte_offset": 0
     },
     {
       "name": "model.layers.1.input_layernorm.weight",
       "shape": [
-        128
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_1_input_layernorm_weight.bin",
-      "nbytes": 512,
+      "nbytes": 1152,
       "byte_offset": 0
     },
     {
       "name": "model.layers.1.mlp.down_proj.weight",
       "shape": [
-        128,
-        352
+        288,
+        768
       ],
       "dtype": "float32",
       "filename": "model_layers_1_mlp_down_proj_weight.bin",
-      "nbytes": 180224,
+      "nbytes": 884736,
       "byte_offset": 0
     },
     {
       "name": "model.layers.1.mlp.gate_proj.weight",
       "shape": [
-        352,
-        128
+        768,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_1_mlp_gate_proj_weight.bin",
-      "nbytes": 180224,
+      "nbytes": 884736,
       "byte_offset": 0
     },
     {
       "name": "model.layers.1.mlp.up_proj.weight",
       "shape": [
-        352,
-        128
+        768,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_1_mlp_up_proj_weight.bin",
-      "nbytes": 180224,
+      "nbytes": 884736,
       "byte_offset": 0
     },
     {
       "name": "model.layers.1.post_attention_layernorm.weight",
       "shape": [
-        128
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_1_post_attention_layernorm_weight.bin",
-      "nbytes": 512,
+      "nbytes": 1152,
       "byte_offset": 0
     },
     {
       "name": "model.layers.1.self_attn.k_proj.weight",
       "shape": [
-        128,
-        128
+        288,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_1_self_attn_k_proj_weight.bin",
-      "nbytes": 65536,
+      "nbytes": 331776,
       "byte_offset": 0
     },
     {
       "name": "model.layers.1.self_attn.o_proj.weight",
       "shape": [
-        128,
-        128
+        288,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_1_self_attn_o_proj_weight.bin",
-      "nbytes": 65536,
+      "nbytes": 331776,
       "byte_offset": 0
     },
     {
       "name": "model.layers.1.self_attn.q_proj.weight",
       "shape": [
-        128,
-        128
+        288,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_1_self_attn_q_proj_weight.bin",
-      "nbytes": 65536,
+      "nbytes": 331776,
       "byte_offset": 0
     },
     {
       "name": "model.layers.1.self_attn.v_proj.weight",
       "shape": [
-        128,
-        128
+        288,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_1_self_attn_v_proj_weight.bin",
-      "nbytes": 65536,
+      "nbytes": 331776,
       "byte_offset": 0
     },
     {
       "name": "model.layers.2.input_layernorm.weight",
       "shape": [
-        128
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_2_input_layernorm_weight.bin",
-      "nbytes": 512,
+      "nbytes": 1152,
       "byte_offset": 0
     },
     {
       "name": "model.layers.2.mlp.down_proj.weight",
       "shape": [
-        128,
-        352
+        288,
+        768
       ],
       "dtype": "float32",
       "filename": "model_layers_2_mlp_down_proj_weight.bin",
-      "nbytes": 180224,
+      "nbytes": 884736,
       "byte_offset": 0
     },
     {
       "name": "model.layers.2.mlp.gate_proj.weight",
       "shape": [
-        352,
-        128
+        768,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_2_mlp_gate_proj_weight.bin",
-      "nbytes": 180224,
+      "nbytes": 884736,
       "byte_offset": 0
     },
     {
       "name": "model.layers.2.mlp.up_proj.weight",
       "shape": [
-        352,
-        128
+        768,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_2_mlp_up_proj_weight.bin",
-      "nbytes": 180224,
+      "nbytes": 884736,
       "byte_offset": 0
     },
     {
       "name": "model.layers.2.post_attention_layernorm.weight",
       "shape": [
-        128
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_2_post_attention_layernorm_weight.bin",
-      "nbytes": 512,
+      "nbytes": 1152,
       "byte_offset": 0
     },
     {
       "name": "model.layers.2.self_attn.k_proj.weight",
       "shape": [
-        128,
-        128
+        288,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_2_self_attn_k_proj_weight.bin",
-      "nbytes": 65536,
+      "nbytes": 331776,
       "byte_offset": 0
     },
     {
       "name": "model.layers.2.self_attn.o_proj.weight",
       "shape": [
-        128,
-        128
+        288,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_2_self_attn_o_proj_weight.bin",
-      "nbytes": 65536,
+      "nbytes": 331776,
       "byte_offset": 0
     },
     {
       "name": "model.layers.2.self_attn.q_proj.weight",
       "shape": [
-        128,
-        128
+        288,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_2_self_attn_q_proj_weight.bin",
-      "nbytes": 65536,
+      "nbytes": 331776,
       "byte_offset": 0
     },
     {
       "name": "model.layers.2.self_attn.v_proj.weight",
       "shape": [
-        128,
-        128
+        288,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_2_self_attn_v_proj_weight.bin",
-      "nbytes": 65536,
+      "nbytes": 331776,
       "byte_offset": 0
     },
     {
       "name": "model.layers.3.input_layernorm.weight",
       "shape": [
-        128
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_3_input_layernorm_weight.bin",
-      "nbytes": 512,
+      "nbytes": 1152,
       "byte_offset": 0
     },
     {
       "name": "model.layers.3.mlp.down_proj.weight",
       "shape": [
-        128,
-        352
+        288,
+        768
       ],
       "dtype": "float32",
       "filename": "model_layers_3_mlp_down_proj_weight.bin",
-      "nbytes": 180224,
+      "nbytes": 884736,
       "byte_offset": 0
     },
     {
       "name": "model.layers.3.mlp.gate_proj.weight",
       "shape": [
-        352,
-        128
+        768,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_3_mlp_gate_proj_weight.bin",
-      "nbytes": 180224,
+      "nbytes": 884736,
       "byte_offset": 0
     },
     {
       "name": "model.layers.3.mlp.up_proj.weight",
       "shape": [
-        352,
-        128
+        768,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_3_mlp_up_proj_weight.bin",
-      "nbytes": 180224,
+      "nbytes": 884736,
       "byte_offset": 0
     },
     {
       "name": "model.layers.3.post_attention_layernorm.weight",
       "shape": [
-        128
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_3_post_attention_layernorm_weight.bin",
-      "nbytes": 512,
+      "nbytes": 1152,
       "byte_offset": 0
     },
     {
       "name": "model.layers.3.self_attn.k_proj.weight",
       "shape": [
-        128,
-        128
+        288,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_3_self_attn_k_proj_weight.bin",
-      "nbytes": 65536,
+      "nbytes": 331776,
       "byte_offset": 0
     },
     {
       "name": "model.layers.3.self_attn.o_proj.weight",
       "shape": [
-        128,
-        128
+        288,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_3_self_attn_o_proj_weight.bin",
-      "nbytes": 65536,
+      "nbytes": 331776,
       "byte_offset": 0
     },
     {
       "name": "model.layers.3.self_attn.q_proj.weight",
       "shape": [
-        128,
-        128
+        288,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_3_self_attn_q_proj_weight.bin",
-      "nbytes": 65536,
+      "nbytes": 331776,
       "byte_offset": 0
     },
     {
       "name": "model.layers.3.self_attn.v_proj.weight",
       "shape": [
-        128,
-        128
+        288,
+        288
       ],
       "dtype": "float32",
       "filename": "model_layers_3_self_attn_v_proj_weight.bin",
-      "nbytes": 65536,
+      "nbytes": 331776,
+      "byte_offset": 0
+    },
+    {
+      "name": "model.layers.4.input_layernorm.weight",
+      "shape": [
+        288
+      ],
+      "dtype": "float32",
+      "filename": "model_layers_4_input_layernorm_weight.bin",
+      "nbytes": 1152,
+      "byte_offset": 0
+    },
+    {
+      "name": "model.layers.4.mlp.down_proj.weight",
+      "shape": [
+        288,
+        768
+      ],
+      "dtype": "float32",
+      "filename": "model_layers_4_mlp_down_proj_weight.bin",
+      "nbytes": 884736,
+      "byte_offset": 0
+    },
+    {
+      "name": "model.layers.4.mlp.gate_proj.weight",
+      "shape": [
+        768,
+        288
+      ],
+      "dtype": "float32",
+      "filename": "model_layers_4_mlp_gate_proj_weight.bin",
+      "nbytes": 884736,
+      "byte_offset": 0
+    },
+    {
+      "name": "model.layers.4.mlp.up_proj.weight",
+      "shape": [
+        768,
+        288
+      ],
+      "dtype": "float32",
+      "filename": "model_layers_4_mlp_up_proj_weight.bin",
+      "nbytes": 884736,
+      "byte_offset": 0
+    },
+    {
+      "name": "model.layers.4.post_attention_layernorm.weight",
+      "shape": [
+        288
+      ],
+      "dtype": "float32",
+      "filename": "model_layers_4_post_attention_layernorm_weight.bin",
+      "nbytes": 1152,
+      "byte_offset": 0
+    },
+    {
+      "name": "model.layers.4.self_attn.k_proj.weight",
+      "shape": [
+        288,
+        288
+      ],
+      "dtype": "float32",
+      "filename": "model_layers_4_self_attn_k_proj_weight.bin",
+      "nbytes": 331776,
+      "byte_offset": 0
+    },
+    {
+      "name": "model.layers.4.self_attn.o_proj.weight",
+      "shape": [
+        288,
+        288
+      ],
+      "dtype": "float32",
+      "filename": "model_layers_4_self_attn_o_proj_weight.bin",
+      "nbytes": 331776,
+      "byte_offset": 0
+    },
+    {
+      "name": "model.layers.4.self_attn.q_proj.weight",
+      "shape": [
+        288,
+        288
+      ],
+      "dtype": "float32",
+      "filename": "model_layers_4_self_attn_q_proj_weight.bin",
+      "nbytes": 331776,
+      "byte_offset": 0
+    },
+    {
+      "name": "model.layers.4.self_attn.v_proj.weight",
+      "shape": [
+        288,
+        288
+      ],
+      "dtype": "float32",
+      "filename": "model_layers_4_self_attn_v_proj_weight.bin",
+      "nbytes": 331776,
+      "byte_offset": 0
+    },
+    {
+      "name": "model.layers.5.input_layernorm.weight",
+      "shape": [
+        288
+      ],
+      "dtype": "float32",
+      "filename": "model_layers_5_input_layernorm_weight.bin",
+      "nbytes": 1152,
+      "byte_offset": 0
+    },
+    {
+      "name": "model.layers.5.mlp.down_proj.weight",
+      "shape": [
+        288,
+        768
+      ],
+      "dtype": "float32",
+      "filename": "model_layers_5_mlp_down_proj_weight.bin",
+      "nbytes": 884736,
+      "byte_offset": 0
+    },
+    {
+      "name": "model.layers.5.mlp.gate_proj.weight",
+      "shape": [
+        768,
+        288
+      ],
+      "dtype": "float32",
+      "filename": "model_layers_5_mlp_gate_proj_weight.bin",
+      "nbytes": 884736,
+      "byte_offset": 0
+    },
+    {
+      "name": "model.layers.5.mlp.up_proj.weight",
+      "shape": [
+        768,
+        288
+      ],
+      "dtype": "float32",
+      "filename": "model_layers_5_mlp_up_proj_weight.bin",
+      "nbytes": 884736,
+      "byte_offset": 0
+    },
+    {
+      "name": "model.layers.5.post_attention_layernorm.weight",
+      "shape": [
+        288
+      ],
+      "dtype": "float32",
+      "filename": "model_layers_5_post_attention_layernorm_weight.bin",
+      "nbytes": 1152,
+      "byte_offset": 0
+    },
+    {
+      "name": "model.layers.5.self_attn.k_proj.weight",
+      "shape": [
+        288,
+        288
+      ],
+      "dtype": "float32",
+      "filename": "model_layers_5_self_attn_k_proj_weight.bin",
+      "nbytes": 331776,
+      "byte_offset": 0
+    },
+    {
+      "name": "model.layers.5.self_attn.o_proj.weight",
+      "shape": [
+        288,
+        288
+      ],
+      "dtype": "float32",
+      "filename": "model_layers_5_self_attn_o_proj_weight.bin",
+      "nbytes": 331776,
+      "byte_offset": 0
+    },
+    {
+      "name": "model.layers.5.self_attn.q_proj.weight",
+      "shape": [
+        288,
+        288
+      ],
+      "dtype": "float32",
+      "filename": "model_layers_5_self_attn_q_proj_weight.bin",
+      "nbytes": 331776,
+      "byte_offset": 0
+    },
+    {
+      "name": "model.layers.5.self_attn.v_proj.weight",
+      "shape": [
+        288,
+        288
+      ],
+      "dtype": "float32",
+      "filename": "model_layers_5_self_attn_v_proj_weight.bin",
+      "nbytes": 331776,
       "byte_offset": 0
     },
     {
       "name": "model.norm.weight",
       "shape": [
-        128
+        288
       ],
       "dtype": "float32",
       "filename": "model_norm_weight.bin",
-      "nbytes": 512,
+      "nbytes": 1152,
       "byte_offset": 0
     }
   ]
