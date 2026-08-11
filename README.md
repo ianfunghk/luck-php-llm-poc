@@ -43,7 +43,7 @@ memory strategy (see §5).
 
 ```bash
 # 1. Clone & enter
-git clone <your-fork-url> php-llm && cd php-llm
+git clone https://github.com/ianfunghk/luck-php-llm-poc php-llm && cd php-llm
 
 # 2. Export real model weights (one-time, on the host).
 #    Default: tiny1m. Swap the line below for stories15M to use the 15M model.
