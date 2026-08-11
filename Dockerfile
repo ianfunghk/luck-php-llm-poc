@@ -16,10 +16,10 @@
 
 FROM php:8.2-fpm-alpine AS runtime
 
-# Install nginx + supervisor.
+# Install nginx + supervisor + the shmop extension (bundled; just needs enabling
+# for the WeightCache shared-memory fast path).
 RUN apk add --no-cache nginx supervisor && \
-    # PHP already ships with opcache; just enable it.
-    docker-php-ext-install opcache && \
+    docker-php-ext-install opcache shmop && \
     # Nginx needs a place for its PID/logs.
     mkdir -p /var/run/nginx /var/log/nginx && \
     # App directory; weights/ is a placeholder for a volume mount.

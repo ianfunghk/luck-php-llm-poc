@@ -39,9 +39,19 @@ class Loader
     /** @var array Parsed tokens.json: [{id, piece, score, type}, ...]. */
     public array $tokens;
 
-    public function __construct(string $dir)
+    /** @var WeightCache|null Shared-memory cache, null when disabled. */
+    private ?WeightCache $cache = null;
+
+    /** Process-local memo: name -> raw bytes already loaded this request. */
+    private array $loadedRaw = [];
+
+    /** Tensors we missed against the shared cache this request (for prime()). */
+    private array $cacheMisses = [];
+
+    public function __construct(string $dir, ?WeightCache $cache = null)
     {
         $this->dir = rtrim($dir, '/');
+        $this->cache = $cache;
 
         $this->config = json_decode(file_get_contents($this->dir . '/config.json'), true);
         if (!is_array($this->config)) {
@@ -69,13 +79,44 @@ class Loader
      * and walk row-by-row with `substr` + `unpack` on demand. Memory cost is
      * essentially the on-disk size (1 byte per byte), with very small PHP
      * string overhead.
+     *
+     * Lookup order:
+     *   1. Process-local memo (`$loadedRaw`) — same process, second call
+     *      never touches disk or shared memory.
+     *   2. Shared-memory cache (if attached).
+     *   3. Disk (`file_get_contents`).
+     *
+     * Misses are remembered so the caller can flush them to the shared cache
+     * with `primeCacheFromMisses()` after generation completes.
      */
     public function loadTensorRaw(string $name): string
     {
         if (!isset($this->byName[$name])) {
             throw new \RuntimeException("Unknown tensor: {$name}");
         }
+
+        // 1. Process-local memo: every PHP-FPM worker keeps its own copy of
+        //    whatever it has already loaded. This is the hot path inside a
+        //    single generation (each per-layer weight is loaded every token).
+        if (isset($this->loadedRaw[$name])) {
+            return $this->loadedRaw[$name];
+        }
+
         $entry = $this->byName[$name];
+
+        // 2. Shared-memory cache (other process may have primed it).
+        if ($this->cache !== null) {
+            $hit = $this->cache->get($name);
+            if ($hit !== null) {
+                $this->loadedRaw[$name] = $hit;
+                if ($this->cache->hits === 1) {
+                    // First shared hit — log once for visibility.
+                }
+                return $hit;
+            }
+        }
+
+        // 3. Disk read.
         $path = $this->dir . '/' . $entry['filename'];
         $blob = file_get_contents($path);
         if ($blob === false || strlen($blob) !== $entry['nbytes']) {
@@ -83,7 +124,42 @@ class Loader
                 "Failed to read {$name} ({$entry['nbytes']} bytes) from {$path}"
             );
         }
+
+        $this->loadedRaw[$name] = $blob;
+
+        // Remember this load so the caller can prime the shared cache later.
+        if ($this->cache !== null && !isset($this->cacheMisses[$name])) {
+            $this->cacheMisses[$name] = $blob;
+        }
         return $blob;
+    }
+
+    /**
+     * Flush any tensors that missed the cache during this request back into
+     * the shared segment, so the next request finds them. Idempotent.
+     */
+    public function primeCacheFromMisses(): bool
+    {
+        if ($this->cache === null || empty($this->cacheMisses)) {
+            return false;
+        }
+        $ok = $this->cache->prime($this->cacheMisses);
+        return $ok;
+    }
+
+    /**
+     * Read-only stats for logging.
+     */
+    public function cacheStats(): array
+    {
+        if ($this->cache === null) {
+            return ['enabled' => false, 'hits' => 0, 'misses' => 0];
+        }
+        return [
+            'enabled' => true,
+            'hits'    => $this->cache->hits,
+            'misses'  => $this->cache->misses,
+        ];
     }
 
     /**

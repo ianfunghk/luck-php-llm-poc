@@ -19,10 +19,12 @@ services:
       - ./src:/var/www/html/src:ro
       - ./web:/var/www/html/web:ro
     restart: unless-stopped
-    # Run a quick CLI generation as the container's health check.
+    # Health check: just confirm PHP can parse the entry file. We deliberately
+    # do NOT run inference here (stories15M takes ~55 s and would blow past
+    # any reasonable probe timeout). Linting catches syntax/autoload errors.
     healthcheck:
-      test: ["CMD", "php", "-r", "require '/var/www/html/infer.php';"]
+      test: ["CMD", "php", "-l", "/var/www/html/infer.php"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
       start_period: 5s

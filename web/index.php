@@ -39,6 +39,56 @@ $format = strtolower($format);
 // a non-HTML format was requested. The bare HTML page shows the form first.
 $shouldRun = isset($_GET['prompt']) || $format !== 'html';
 
+// Read config.json + manifest.json once so the page header can describe the
+// currently-loaded model (e.g. "stories15M" vs "tiny1m") without hardcoding.
+$modelLabel = 'unknown';
+$modelStats = '';
+$cfgPath = __DIR__ . '/../weights/config.json';
+$manifestPath = __DIR__ . '/../weights/manifest.json';
+if (is_file($cfgPath) && is_file($manifestPath)) {
+    $cfg = json_decode(file_get_contents($cfgPath), true) ?: [];
+    $mani = json_decode(file_get_contents($manifestPath), true) ?: [];
+    $totalBytes = 0;
+    if (isset($mani['tensors'])) {
+        foreach ($mani['tensors'] as $t) {
+            $totalBytes += $t['nbytes'] ?? 0;
+        }
+    }
+    // Rough param count: every weight is float32 (4 bytes).
+    $params = $totalBytes > 0 ? intdiv($totalBytes, 4) : 0;
+    $modelLabel = model_label_from_config($cfg);
+    $modelStats = sprintf(
+        '%s params, %d layers, hidden=%d, vocab=%d',
+        format_params($params),
+        $cfg['num_layers'] ?? 0,
+        $cfg['hidden_size'] ?? 0,
+        $cfg['vocab_size'] ?? 0
+    );
+}
+
+/**
+ * Best-effort model name from config. The export step records architecture
+ * + sizes; we synthesise a friendly label.
+ */
+function model_label_from_config(array $cfg): string
+{
+    $h = $cfg['hidden_size'] ?? 0;
+    $v = $cfg['vocab_size'] ?? 0;
+    $l = $cfg['num_layers'] ?? 0;
+    if ($h === 128 && $v === 512 && $l === 4) return 'shibatch/tiny1m';
+    if ($h === 64  && $v === 512)              return 'shibatch/stories-converted (hf_stories260K)';
+    if ($h === 288 && $v === 32000)            return 'shibatch/stories-converted (hf_stories15M)';
+    return $cfg['architecture'] ?? 'LlamaForCausalLM';
+}
+
+function format_params(int $n): string
+{
+    if ($n >= 1_000_000_000) return number_format($n / 1_000_000_000, 1) . 'B';
+    if ($n >= 1_000_000)     return number_format($n / 1_000_000, 1) . 'M';
+    if ($n >= 1_000)         return number_format($n / 1_000, 1) . 'k';
+    return (string)$n;
+}
+
 $result = null;
 $error  = null;
 if ($shouldRun) {
@@ -64,6 +114,7 @@ if ($format === 'json') {
             'tokens'             => $result['tokens_generated'],
             'elapsed_sec'        => round($result['elapsed_sec'], 4),
             'peak_memory_mb'     => round($result['peak_memory_bytes'] / 1024 / 1024, 2),
+            'cache'              => $result['cache_stats'] ?? null,
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
     }
     exit;
@@ -79,6 +130,10 @@ if ($format === 'text' || $error !== null) {
         echo "Tokens   : " . $result['tokens_generated'] . "\n";
         echo "Elapsed  : " . sprintf("%.3f s", $result['elapsed_sec']) . "\n";
         echo "Peak mem : " . sprintf("%.1f MB", $result['peak_memory_bytes'] / 1024 / 1024) . "\n";
+        if (isset($result['cache_stats']) && $result['cache_stats']['enabled']) {
+            echo "Cache    : " . $result['cache_stats']['hits'] . " hits / "
+                . $result['cache_stats']['misses'] . " misses (shmop)\n";
+        }
     }
     exit;
 }
@@ -116,7 +171,7 @@ header('Content-Type: text/html; charset=utf-8');
 <body>
 <h1>php-llm &mdash; pure-PHP Llama2 forward pass</h1>
 <div class="sub">
-  Model: <code>shibatch/tiny1m</code> (896k params, 4 layers, hidden=128, vocab=512)
+  Model: <code><?= htmlspecialchars($modelLabel) ?></code> (<?= htmlspecialchars($modelStats) ?>)
   &middot; streamable per-tensor float32 weights &middot; no FFI, no exec.
 </div>
 

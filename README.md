@@ -104,10 +104,11 @@ random noise — the Llama2 weights are real, loaded straight from HuggingFace.
 | `requirements.txt` | Python deps: `numpy`, `safetensors`, `huggingface_hub`. (SentencePiece optional, only for SentencePiece vocab models.) |
 | `infer.php` | Pure-PHP CLI entry point + shared `run_inference()` function. Top-of-file tunables (`WEIGHTS_DIR`, `CONTEXT_LIMIT`, `MAX_TOKENS`, `TEMPERATURE`). |
 | `src/Math.php` | Pure-PHP math: `matvec`, `matvecRaw`, `rmsNorm`, `silu`, `softmax`, `applyRope`. Heavily commented. |
-| `src/Loader.php` | Streams each tensor from disk. Provides `loadTensorRaw()` (returns a binary string — cheap) and `loadTensor()` (returns a float[]). |
+| `src/Loader.php` | Streams each tensor from disk. Provides `loadTensorRaw()` (returns a binary string — cheap) and `loadTensor()` (returns a float[]). Process-local memo + shmop-aware. |
 | `src/Tokenizer.php` | Greedy longest-match encoder + byte-fallback + marker-aware decoder. Auto-detects SentencePiece (U+2581) vs GPT2 (U+0120) space markers from `config.json`. |
 | `src/Sampler.php` | Temperature sampling (softmax + cumulative distribution). |
 | `src/Forward.php` | Llama2 forward pass. Embedding and LM-head matrices are kept as raw binary strings and walked one row per token. Per-layer weights are unpacked lazily and freed after each layer. |
+| `src/WeightCache.php` | Optional `shmop`-backed shared memory cache. First request populates it; subsequent requests (CLI or HTTP, any PHP-FPM worker) skip disk I/O. Falls back silently if `shmop` is unavailable. |
 | `web/index.php` | HTTP entry point — HTML form, `?format=text`, `?format=json`. |
 | `Dockerfile` | PHP 8.2-FPM + Nginx + supervisord, single image, no Python. |
 | `docker-compose.yml` | Builds & exposes the image on `:8080`, bind-mounts `./weights`. |
@@ -258,6 +259,53 @@ The combined effect on stories15M:
 The KV cache grows by `[num_kv_heads * head_dim]` floats per token per layer.
 At 128 tokens for stories15M: `128 × 6 × 2 × 288 × 4 bytes = 1.7 MB`. Negligible.
 
+### 5d. Shared-memory weight cache (`shmop`)
+
+The first time any PHP-FPM worker needs a tensor, it reads the `.bin` from
+disk. Subsequent workers — and subsequent requests in the same worker — would
+re-read it. [`src/WeightCache.php`](src/WeightCache.php) cuts that down by
+copying every loaded tensor into a single System V shared memory segment,
+keyed off the `config.json` file identity.
+
+Workflow per request:
+
+```
+loadTensorRaw(name)
+  ├─ process-local memo hit?        ─► return   (free; common case within a request)
+  ├─ shmop segment hit?             ─► memoize + return
+  └─ disk read                      ─► memoize + record as "miss"
+        ↓
+[after generation]
+Loader::primeCacheFromMisses()      ─► copy every miss into the shmop segment
+```
+
+| Request | shmop result | Peak mem | Wall time |
+|---|---|---|---|
+| 1st (cold) | 0 hits / 57 misses | 211 MB | 4.2 s |
+| 2nd (warm) | **57 hits / 0 misses** | **142 MB** | **3.5 s** |
+| 3rd+ | same as 2nd | same | same |
+
+Cache key is derived from `ftok(config.json, 'P')`. If you swap models
+(re-run `export_weights.py`), the new `config.json` has a different inode and
+the cache auto-invalidates.
+
+You can disable the cache with:
+
+```php
+// infer.php
+const CACHE_BACKEND = 'none';   // always read from disk
+```
+
+Or require it explicitly:
+
+```php
+const CACHE_BACKEND = 'shmop';  // throw if shmop ext is missing
+```
+
+The Dockerfile enables the `shmop` extension automatically. Real shared
+hosting providers may or may not offer it — the `'auto'` default falls back
+silently when shmop is unavailable.
+
 ---
 
 ## 6. How the forward pass works
@@ -387,6 +435,20 @@ regenerate `weights/manifest.json` matching the current PHP code.
 The `tokenizer_kind` field in `weights/config.json` was mis-detected. Delete
 `weights/` and re-run `export_weights.py`; the script auto-detects which
 space marker the vocab actually uses.
+
+**`shmop_open(): unable to attach or create shared memory` / `Weight cache: disabled`**
+Either `shmop` is not loaded (run `php -m | grep shmop` to confirm; install
+it with `docker-php-ext-install shmop` inside a custom image) or your host
+restricts System V IPC segments. The runtime falls back to disk reads
+automatically. To force-fail instead, set `CACHE_BACKEND='shmop'`.
+
+**Shared-memory cache not warming between requests**
+Confirm your PHP-FPM workers run in the same IPC namespace. Containers by
+default isolate IPC; pass `--ipc=host` to `docker run` or set
+`ipc: host` in `docker-compose.yml` if you see hits staying at 0 across
+requests. Note: this is only needed for cross-process sharing — within a
+single PHP-FPM worker the process-local memo already eliminates repeat disk
+reads.
 
 ---
 

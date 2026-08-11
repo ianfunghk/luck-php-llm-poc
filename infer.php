@@ -40,6 +40,14 @@ const TEMPERATURE = 0.8;
 /** Default prompt when none is provided. */
 const DEFAULT_PROMPT = 'Once upon a time';
 
+/**
+ * Shared-memory weight cache strategy.
+ *   'auto'  -> use shmop if the extension is loaded, else skip silently
+ *   'shmop' -> require shmop (fail loudly if missing)
+ *   'none'  -> always read from disk
+ */
+const CACHE_BACKEND = 'auto';
+
 // ----------------------------------------------------------------------------
 // Runtime safety
 // ----------------------------------------------------------------------------
@@ -67,11 +75,41 @@ spl_autoload_register(function (string $class): void {
 // ----------------------------------------------------------------------------
 
 /**
+ * Build a Loader, optionally backed by a shared-memory weight cache.
+ */
+function make_loader(string $weightsDir): PhpLlm\Loader
+{
+    $cache = null;
+    $backend = strtoupper(CACHE_BACKEND);
+    if ($backend === 'NONE') {
+        // skip
+    } else {
+        $hasShmop = function_exists('shmop_open');
+        if ($backend === 'SHMOP' && !$hasShmop) {
+            throw new \RuntimeException("CACHE_BACKEND='shmop' but shmop extension is not loaded");
+        }
+        if ($hasShmop) {
+            // Two-step: we need config first to build the cache's model hash.
+            $cfg = json_decode(file_get_contents($weightsDir . '/config.json'), true);
+            $cache = new PhpLlm\WeightCache($weightsDir, $cfg);
+            // Try to attach; on miss we just proceed — first loadTensorRaw
+            // call will record a miss and we prime at the end.
+            $attached = $cache->attach();
+            if (getenv('PHPLLM_DEBUG')) {
+                fwrite(STDERR, "[php-llm] shmop: " . ($attached ? "attached" : "no existing segment") . "\n");
+            }
+        }
+    }
+    return new PhpLlm\Loader($weightsDir, $cache);
+}
+
+/**
  * Run prompt -> generated text.
  *
  * @return array{prompt:string, generated_ids:int[], generated_text:string,
  *               tokens_generated:int, elapsed_sec:float,
- *               peak_memory_bytes:int, mem_per_token_bytes:int[]}
+ *               peak_memory_bytes:int, mem_per_token_bytes:int[],
+ *               cache_stats:?array}
  */
 function run_inference(string $prompt, int $maxTokens = MAX_TOKENS,
                        float $temperature = TEMPERATURE,
@@ -79,7 +117,7 @@ function run_inference(string $prompt, int $maxTokens = MAX_TOKENS,
 {
     $weightsDir = $weightsDir ?? WEIGHTS_DIR;
 
-    $loader   = new PhpLlm\Loader($weightsDir);
+    $loader   = make_loader($weightsDir);
     $tokenizer = new PhpLlm\Tokenizer(
         $loader->tokens,
         $loader->config['bos_token_id'] ?? 1,
@@ -140,6 +178,9 @@ function run_inference(string $prompt, int $maxTokens = MAX_TOKENS,
     }
     $elapsed = microtime(true) - $start;
 
+    // Flush any cache misses so the next request hits the shared segment.
+    $loader->primeCacheFromMisses();
+
     return [
         'prompt'             => $prompt,
         'prompt_ids'         => $promptIds,
@@ -149,6 +190,7 @@ function run_inference(string $prompt, int $maxTokens = MAX_TOKENS,
         'elapsed_sec'        => $elapsed,
         'peak_memory_bytes'  => memory_get_peak_usage(true),
         'mem_per_token_bytes'=> $memPerToken,
+        'cache_stats'        => $loader->cacheStats(),
     ];
 }
 
@@ -187,6 +229,16 @@ if (PHP_SAPI === 'cli' && !getenv('PHPLLM_NO_AUTORUN')) {
         $last  = $result['mem_per_token_bytes'][count($result['mem_per_token_bytes']) - 1];
         echo "Mem at token #1   : " . sprintf("%.1f MB", $first / 1024 / 1024) . "\n";
         echo "Mem at last token : " . sprintf("%.1f MB", $last / 1024 / 1024) . "\n";
+    }
+
+    if (isset($result['cache_stats'])) {
+        $cs = $result['cache_stats'];
+        if (!$cs['enabled']) {
+            echo "Weight cache     : disabled (set CACHE_BACKEND=auto|shmop to enable)\n";
+        } else {
+            echo "Weight cache     : " . $cs['hits'] . " hits, " . $cs['misses']
+                . " misses (shmop)\n";
+        }
     }
 
     exit(0);
