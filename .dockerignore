@@ -1,0 +1,23 @@
+# Files we never want inside the Docker image (keeps it tiny).
+.git
+.gitignore
+.github
+.cursor
+.vscode
+.idea
+.DS_Store
+
+# Python export environment lives on the host; the image is PHP-only.
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+
+# The weights directory is volume-mounted at runtime, not baked in.
+weights/
+
+# Plans / scratch.
+.cursor
+*.plan.md

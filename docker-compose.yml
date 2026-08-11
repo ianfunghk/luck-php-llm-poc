@@ -1,0 +1,28 @@
+services:
+  # --------------------------------------------------------------------- #
+  # php-llm: pure-PHP Llama2 forward pass, served via Nginx + PHP-FPM.
+  # Built from this repo's Dockerfile. The `weights/` directory produced by
+  # `python export_weights.py` is bind-mounted in (user chose runtime_mount).
+  # --------------------------------------------------------------------- #
+  app:
+    build: .
+    image: php-llm:latest
+    container_name: php-llm
+    ports:
+      - "8080:80"
+    volumes:
+      # Bind-mount weights so re-running export_weights.py refreshes them with
+      # zero image rebuild.
+      - ./weights:/var/www/html/weights:ro
+      # Optional: live-reload the PHP source during development.
+      - ./infer.php:/var/www/html/infer.php:ro
+      - ./src:/var/www/html/src:ro
+      - ./web:/var/www/html/web:ro
+    restart: unless-stopped
+    # Run a quick CLI generation as the container's health check.
+    healthcheck:
+      test: ["CMD", "php", "-r", "require '/var/www/html/infer.php';"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s

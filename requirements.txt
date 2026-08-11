@@ -1,0 +1,4 @@
+numpy>=1.24
+safetensors>=0.4
+huggingface_hub>=0.20
+sentencepiece>=0.1.99
